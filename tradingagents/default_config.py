@@ -90,13 +90,15 @@ DEFAULT_CONFIG = _apply_env_overrides({
         "ECB Bank of England BOJ central bank policy",
         "oil commodities supply chain energy",
     ],
-    # Data vendor configuration
-    # Category-level configuration (default for all tools in category)
+    # Data vendor configuration — Plan A: Best Quality
+    # Comma-separated values define the fallback chain. The first available
+    # vendor is used; if it rate-limits or errors, the next is tried.
+    # Vendors whose package is not installed are silently skipped.
     "data_vendors": {
-        "core_stock_apis": "tushare",       # Options: tushare, alpha_vantage, yfinance
-        "technical_indicators": "tushare",  # Options: tushare, alpha_vantage, yfinance
-        "fundamental_data": "tushare",      # Options: tushare, alpha_vantage, yfinance
-        "news_data": "tushare",             # Options: tushare, alpha_vantage, yfinance
+        "core_stock_apis": "joinquant,tushare,akshare,yfinance",
+        "technical_indicators": "joinquant,tushare,akshare,yfinance",
+        "fundamental_data": "joinquant,tushare,akshare,yfinance",
+        "news_data": "akshare,tushare,yfinance",
     },
     # Tool-level configuration (takes precedence over category-level)
     "tool_vendors": {

@@ -32,6 +32,16 @@ dependencies = [
     "yfinance>=0.2.63",
 ]
 
+[project.optional-dependencies]
+# Individual Chinese A-share data providers
+akshare = ["akshare>=1.16.0"]
+baostock = ["baostock>=0.8.8"]
+joinquant = ["jqdatasdk>=1.9.0"]
+# Bundle: free A-share data (no registration needed for AKShare/BaoStock)
+cn-data = ["akshare>=1.16.0", "baostock>=0.8.8"]
+# Bundle: all A-share data providers including JoinQuant
+cn-data-full = ["akshare>=1.16.0", "baostock>=0.8.8", "jqdatasdk>=1.9.0"]
+
 [project.scripts]
 tradingagents = "cli.main:app"
 

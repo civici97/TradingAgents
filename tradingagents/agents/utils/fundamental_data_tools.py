@@ -133,3 +133,54 @@ def get_share_unlock(
     """
     from tradingagents.dataflows.tushare_provider import get_share_unlock as _get
     return _get(ticker)
+
+
+# ============================================================================
+# AKShare-powered A-Share Enhanced Tools (free, no credentials needed)
+# ============================================================================
+
+@tool
+def get_fund_flow(
+    ticker: Annotated[str, "ticker symbol"],
+) -> str:
+    """
+    Get individual stock fund flow data (个股资金流向) from AKShare.
+    Shows main force (主力), large (大单), medium (中单), small (小单) net inflows.
+    Main force net inflow > 0 indicates institutional buying = typically bullish.
+    Main force net outflow indicates institutional selling = typically bearish.
+    Only works for A-share stocks (.SS/.SH/.SZ tickers).
+    """
+    from tradingagents.dataflows.akshare_provider import get_fund_flow as _get
+    return _get(ticker)
+
+
+@tool
+def get_lhb_data(
+    ticker: Annotated[str, "ticker symbol"],
+) -> str:
+    """
+    Get Dragon Tiger Board data (龙虎榜) from AKShare.
+    Shows which institutions and brokerages are buying/selling on unusual trading days.
+    LHB appearances indicate significant unusual trading activity and institutional interest.
+    Only works for A-share stocks (.SS/.SH/.SZ tickers).
+    """
+    from tradingagents.dataflows.akshare_provider import get_lhb_data as _get
+    return _get(ticker)
+
+
+@tool
+def get_macro_china(
+    indicator: Annotated[str, "macro indicator: gdp, cpi, pmi, m2, shibor"] = "gdp",
+) -> str:
+    """
+    Get Chinese macroeconomic data from AKShare.
+    Available indicators:
+    - gdp: GDP growth rate
+    - cpi: Consumer Price Index (monthly)
+    - pmi: Purchasing Managers Index (manufacturing)
+    - m2: Money supply M2
+    - shibor: Shanghai Interbank Offered Rate (overnight)
+    Use this to understand the macro environment for Chinese stock analysis.
+    """
+    from tradingagents.dataflows.akshare_provider import get_macro_china as _get
+    return _get(indicator)

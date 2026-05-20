@@ -298,6 +298,8 @@ def get_indicators(
             ind_string += f"{date_str}: {value}\n"
             current_dt = current_dt - relativedelta(days=1)
 
+    except TushareRateLimitError:
+        raise
     except Exception as e:
         logger.error(f"Error getting Tushare indicators: {e}")
         return f"Error calculating {indicator} for {symbol}: {e}"
@@ -394,6 +396,8 @@ def get_fundamentals(
 
         return "\n".join(lines)
 
+    except TushareRateLimitError:
+        raise
     except Exception as e:
         return f"Error retrieving fundamentals for {ticker}: {str(e)}"
 
@@ -444,6 +448,8 @@ def get_balance_sheet(
 
         return header + csv_string
 
+    except TushareRateLimitError:
+        raise
     except Exception as e:
         return f"Error retrieving balance sheet for {ticker}: {str(e)}"
 
@@ -481,6 +487,8 @@ def get_cashflow(
 
         return header + csv_string
 
+    except TushareRateLimitError:
+        raise
     except Exception as e:
         return f"Error retrieving cash flow for {ticker}: {str(e)}"
 
@@ -518,6 +526,8 @@ def get_income_statement(
 
         return header + csv_string
 
+    except TushareRateLimitError:
+        raise
     except Exception as e:
         return f"Error retrieving income statement for {ticker}: {str(e)}"
 
@@ -567,6 +577,8 @@ def get_news(
 
         return header + "\n---\n".join(articles)
 
+    except TushareRateLimitError:
+        raise
     except Exception as e:
         return f"No news available for {ticker}: {str(e)}"
 
@@ -580,6 +592,12 @@ def get_global_news(
     pro = _get_pro()
     from dateutil.relativedelta import relativedelta
     from datetime import datetime as dt
+
+    # Guard against None values passed from the Optional tool wrapper
+    if look_back_days is None:
+        look_back_days = 7
+    if limit is None:
+        limit = 10
 
     start_dt = dt.strptime(curr_date, "%Y-%m-%d") - relativedelta(days=look_back_days)
     start_date = start_dt.strftime("%Y%m%d")
@@ -612,6 +630,8 @@ def get_global_news(
 
         return header + "\n---\n".join(articles)
 
+    except TushareRateLimitError:
+        raise
     except Exception as e:
         return f"No global news available: {str(e)}"
 
@@ -647,6 +667,8 @@ def get_insider_transactions(
 
         return header + csv_string
 
+    except TushareRateLimitError:
+        raise
     except Exception as e:
         return f"Error retrieving insider transactions for {ticker}: {str(e)}"
 

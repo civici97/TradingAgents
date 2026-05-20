@@ -12,6 +12,8 @@ from tradingagents.agents.utils.fundamental_data_tools import (
     get_top_holders,
     get_margin_data,
     get_share_unlock,
+    get_fund_flow,
+    get_lhb_data,
 )
 from tradingagents.dataflows.config import get_config
 
@@ -47,6 +49,8 @@ def create_fundamentals_analyst(llm):
                 get_top_holders,
                 get_margin_data,
                 get_share_unlock,
+                get_fund_flow,
+                get_lhb_data,
             ])
             system_message += (
                 "\n\n## A-Share Specific Analysis (Chinese market tools available)"
@@ -55,12 +59,16 @@ def create_fundamentals_analyst(llm):
                 "\n- `get_top_holders`: 十大股东 + 北向资金 — institutional ownership and foreign capital flows. Rising northbound holdings = foreign investors are bullish."
                 "\n- `get_margin_data`: 融资融券 — margin trading balance. Rising margin = leveraged bullish sentiment."
                 "\n- `get_share_unlock`: 限售解禁 — upcoming share unlocks create potential selling pressure."
+                "\n- `get_fund_flow`: 个股资金流向 — main force (主力) net inflow/outflow. Positive main force flow = institutional buying."
+                "\n- `get_lhb_data`: 龙虎榜 — dragon tiger board. Shows institutional/brokerage buying on unusual trading days."
                 "\n\nUse ALL of these tools in addition to the standard fundamental tools. In your report, include a dedicated section for A-share specific signals:"
                 "\n1. **筹码集中度 (Chip Concentration)**: Is the holder count increasing or decreasing? What does this mean?"
                 "\n2. **机构/外资动向 (Institutional/Foreign Flows)**: Are northbound funds increasing their position?"
                 "\n3. **融资融券 (Margin Sentiment)**: Is margin balance rising or falling? What's the leverage direction?"
                 "\n4. **限售解禁 (Unlock Risk)**: Any major unlocks coming? What's the potential selling pressure?"
-                "\n5. **政策/行业风险 (Policy/Industry Risk)**: Is this industry subject to regulatory risk in China?"
+                "\n5. **资金流向 (Fund Flow)**: Is main force (主力) buying or selling? What's the institutional direction?"
+                "\n6. **龙虎榜 (Dragon Tiger Board)**: Any recent LHB appearances? Which institutions are active?"
+                "\n7. **政策/行业风险 (Policy/Industry Risk)**: Is this industry subject to regulatory risk in China?"
             )
 
         system_message += get_language_instruction()
