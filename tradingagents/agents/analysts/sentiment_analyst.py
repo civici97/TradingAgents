@@ -203,21 +203,27 @@ def _build_cn_system_message(
 ## Data sources (pre-fetched, in this prompt)
 
 ### 新闻 (News) — past 7 days
-Institutional framing. Fact-driven, slower-moving signal.
+Institutional framing. Fact-driven, slower-moving signal. Typically the most reliable source for fundamental events (earnings, policy, sector trends).
 
 <start_of_news>
 {news_block}
 <end_of_news>
 
 ### 雪球 (Xueqiu/Snowball) — China's leading investor social platform
-Similar to StockTwits. Per-stock discussion feed with investor opinions and analysis. Each post includes engagement metrics (likes, replies). Sentiment is detected via keyword analysis.
+Xueqiu is a relatively high-quality investor community — users include professional fund managers, sell-side analysts, and experienced retail investors. Sentiment from Xueqiu tends to be more considered and analytical. Treat this as a **direct sentiment signal** (similar to StockTwits for US stocks). Each post includes engagement metrics (likes, replies).
 
 <start_of_xueqiu>
 {xueqiu_block}
 <end_of_xueqiu>
 
-### 东方财富股吧 (East Money Guba) — China's largest stock discussion forum
-Similar to Reddit r/wallstreetbets but organized per-stock. High volume of retail investor posts with titles reflecting current sentiment and hot topics.
+### 东方财富股吧 (East Money Guba) — ⚠️ CONTRARIAN INDICATOR
+**CRITICAL**: 东方财富股吧 is China's largest stock discussion forum, dominated by unsophisticated retail investors (散户). Post quality is very low — emotional, reactive, and herd-driven. In A-share investing, "股吧看反" (read Guba in reverse) is a well-known heuristic:
+
+- When 股吧 is **extremely bearish** (>70% 看空, posts like "割肉", "垃圾", "跑路") → Often signals a **contrarian BUY** / potential bottom
+- When 股吧 is **extremely bullish** (>70% 看多, posts like "翻倍", "起飞", "冲") → Often signals a **contrarian SELL** / potential top
+- When sentiment is **mixed or neutral** → No strong contrarian signal; sentiment is unreliable
+
+The value of 股吧 is NOT in what it says, but in the **extremity of its emotion** as a crowd-psychology indicator.
 
 <start_of_eastmoney>
 {eastmoney_block}
@@ -225,31 +231,35 @@ Similar to Reddit r/wallstreetbets but organized per-stock. High volume of retai
 
 ## How to analyze this data (best practices)
 
-1. **Read the 雪球 看多/看空 (Bullish/Bearish) ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; ≥90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters.
+1. **News is ground truth.** Start with news headlines to understand the factual backdrop — earnings, policy changes, sector developments, macro events. This is the most reliable source.
 
-2. **Look for cross-source divergences.** If news framing is bearish but 雪球 is overwhelmingly bullish, that mismatch is itself a signal.
+2. **雪球 provides nuanced sentiment.** If 雪球 data is available, treat it as a relatively thoughtful consensus read. Look for specific arguments, catalysts cited, and engagement patterns. High-engagement bearish posts from experienced users are a stronger signal than raw counts.
 
-3. **Weight 东方财富股吧 posts by frequency of recurring themes.** What topics keep coming up? That's the dominant narrative driving current sentiment.
+3. **东方财富股吧 is a CONTRARIAN indicator — invert it.** Do NOT take 股吧 sentiment at face value. Instead:
+   - If >70% of 股吧 posts are bearish/panicking → Flag this as a **potential bottom signal** (retail capitulation)
+   - If >70% of 股吧 posts are euphoric/bullish → Flag this as a **potential top signal** (retail FOMO)
+   - If sentiment is mixed → 股吧 provides no useful signal; disregard it
+   - Look for **extreme emotional language** (割肉/套牢/垃圾 = capitulation; 翻倍/起飞/冲 = euphoria) as the strongest contrarian signals
 
-4. **Distinguish opinion from event.** A news headline about earnings is an event; a 雪球 post saying "加仓！" is opinion. Both are inputs but should be weighted differently.
+4. **Cross-reference contrarian signals with news.** The most powerful signal is when 股吧 shows extreme bearishness BUT news shows positive catalysts (or vice versa). This divergence is highly actionable.
 
-5. **Identify recurring narrative themes.** What topic keeps coming up across sources? That's the dominant narrative driving current sentiment.
+5. **Identify catalysts and risks** — policy changes (产业政策), earnings reports, sector rotation, macro headlines (降息/降准), northbound fund flows (北向资金).
 
-6. **Be honest about data limits.** If one or more sources returned an "<unavailable>" placeholder, the sentiment read is less robust — flag this caveat explicitly.
+6. **Consider A-share market characteristics** — 涨停/跌停 (price limits), 主力/游资 (institutional vs hot money) dynamics, 融资融券 (margin trading) sentiment.
 
-7. **Identify catalysts and risks** — policy changes (e.g. 产业政策), earnings reports, sector rotation, macro headlines (e.g. 降息, 降准).
-
-8. **Consider A-share market characteristics** — pay attention to 涨停/跌停 (price limit) mentions, 主力/游资 (institutional vs hot money) dynamics, 北向资金 (northbound fund flows).
+7. **Be honest about data limits.** If one or more sources returned an "<unavailable>" placeholder, clearly state which sources are missing and how that affects confidence.
 
 ## Output
 
 Produce a sentiment report covering, in order:
 
-1. **Overall sentiment direction** — 看多/Bullish / 看空/Bearish / 中性/Neutral / 分歧/Mixed — with a brief confidence note based on data quality and sample size.
-2. **Source-by-source breakdown** — what each of news / 雪球 / 东方财富股吧 is telling you, with specific evidence (cite post counts, ratios, notable posts).
-3. **Divergences, alignments, and key narratives** across sources.
-4. **Catalysts and risks** surfaced by the data.
-5. **Markdown table** at the end summarizing key sentiment signals, their direction, source, and supporting evidence.
+1. **Overall sentiment direction** — 看多/Bullish / 看空/Bearish / 中性/Neutral / 分歧/Mixed — with a confidence level and explanation.
+2. **News analysis** — key events, institutional framing, fundamental drivers.
+3. **雪球 sentiment** (if available) — investor consensus, key arguments, notable opinions.
+4. **东方财富股吧 contrarian read** — describe the raw sentiment, then explain what it means as a contrarian indicator. Explicitly state whether the crowd's emotional state suggests a contrarian opportunity or not.
+5. **Divergences and cross-source synthesis** — where do the sources agree? Where do they disagree? Which divergences are most actionable?
+6. **Catalysts, risks, and key narratives**.
+7. **Markdown table** summarizing: Signal | Direction | Source | Contrarian? | Evidence.
 
 {get_language_instruction()}"""
 
