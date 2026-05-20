@@ -649,3 +649,164 @@ def get_insider_transactions(
 
     except Exception as e:
         return f"Error retrieving insider transactions for {ticker}: {str(e)}"
+
+
+# ============================================================================
+# A-Share Specific Data
+# ============================================================================
+
+def get_holder_count(
+    ticker: Annotated[str, "ticker symbol of the company"],
+) -> str:
+    """Get shareholder count trends (股东人数变化) — a key chip concentration indicator."""
+    pro = _get_pro()
+    ts_code = _convert_ticker(ticker)
+
+    try:
+        data = _ts_retry(lambda: pro.stk_holdernumber(
+            ts_code=ts_code,
+        ))
+
+        if data is None or data.empty:
+            return f"No holder count data found for '{ticker}'"
+
+        data = data.head(10)
+        lines = [f"# Shareholder Count Trends (股东人数变化) for {ticker.upper()}"]
+        lines.append(f"# Data source: Tushare")
+        lines.append(f"# Chip concentration indicator: decreasing count = more concentrated = bullish\n")
+
+        for _, row in data.iterrows():
+            end_date = row.get("end_date", "?")
+            holder_num = row.get("holder_num", "?")
+            holder_num_change = row.get("holder_num_change", "")
+            lines.append(f"Date: {end_date}, Holders: {holder_num}, Change: {holder_num_change}")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"Holder count unavailable for {ticker}: {str(e)}"
+
+
+def get_top_holders(
+    ticker: Annotated[str, "ticker symbol of the company"],
+) -> str:
+    """Get top 10 shareholders + northbound fund holdings (十大股东 + 北向资金)."""
+    pro = _get_pro()
+    ts_code = _convert_ticker(ticker)
+
+    lines = [f"# Top Shareholders & Institutional Holdings for {ticker.upper()}"]
+    lines.append(f"# Data source: Tushare\n")
+
+    # Top 10 shareholders
+    try:
+        top10 = _ts_retry(lambda: pro.top10_holders(
+            ts_code=ts_code,
+        ))
+
+        if top10 is not None and not top10.empty:
+            latest_date = top10["end_date"].iloc[0]
+            latest = top10[top10["end_date"] == latest_date]
+            lines.append(f"## Top 10 Shareholders (as of {latest_date})\n")
+            for _, row in latest.iterrows():
+                name = row.get("holder_name", "?")
+                pct = row.get("hold_ratio", "?")
+                amount = row.get("hold_amount", "?")
+                lines.append(f"- {name}: {pct}% ({amount}万股)")
+        else:
+            lines.append("## Top 10 Shareholders: Data unavailable")
+    except Exception as e:
+        lines.append(f"## Top 10 Shareholders: {str(e)}")
+
+    # Northbound fund holdings (北向资金/沪股通/深股通)
+    try:
+        hk_hold = _ts_retry(lambda: pro.hk_hold(
+            ts_code=ts_code,
+        ))
+
+        if hk_hold is not None and not hk_hold.empty:
+            hk_hold = hk_hold.head(10)
+            lines.append(f"\n## Northbound Fund Holdings (北向资金持仓)\n")
+            for _, row in hk_hold.iterrows():
+                trade_date = row.get("trade_date", "?")
+                vol = row.get("vol", "?")
+                ratio = row.get("ratio", "?")
+                lines.append(f"Date: {trade_date}, Shares: {vol}, Ratio: {ratio}%")
+        else:
+            lines.append("\n## Northbound Fund Holdings: Data unavailable")
+    except Exception as e:
+        lines.append(f"\n## Northbound Fund Holdings: {str(e)}")
+
+    return "\n".join(lines)
+
+
+def get_margin_data(
+    ticker: Annotated[str, "ticker symbol of the company"],
+) -> str:
+    """Get margin trading data (融资融券) — leverage sentiment indicator."""
+    pro = _get_pro()
+    ts_code = _convert_ticker(ticker)
+
+    try:
+        data = _ts_retry(lambda: pro.margin_detail(
+            ts_code=ts_code,
+        ))
+
+        if data is None or data.empty:
+            return f"No margin trading data found for '{ticker}'"
+
+        data = data.head(10)
+        lines = [f"# Margin Trading Data (融资融券) for {ticker.upper()}"]
+        lines.append(f"# Data source: Tushare")
+        lines.append(f"# Rising margin balance = leveraged bullish sentiment\n")
+
+        for _, row in data.iterrows():
+            trade_date = row.get("trade_date", "?")
+            rzye = row.get("rzye", "?")     # 融资余额
+            rqye = row.get("rqye", "?")     # 融券余额
+            rzmre = row.get("rzmre", "?")   # 融资买入额
+            lines.append(
+                f"Date: {trade_date}, Margin Buy Balance: {rzye}, "
+                f"Short Sell Balance: {rqye}, Day Margin Buy: {rzmre}"
+            )
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"Margin data unavailable for {ticker}: {str(e)}"
+
+
+def get_share_unlock(
+    ticker: Annotated[str, "ticker symbol of the company"],
+) -> str:
+    """Get share unlock schedule (限售解禁) — potential selling pressure indicator."""
+    pro = _get_pro()
+    ts_code = _convert_ticker(ticker)
+
+    try:
+        data = _ts_retry(lambda: pro.share_float(
+            ts_code=ts_code,
+        ))
+
+        if data is None or data.empty:
+            return f"No share unlock data found for '{ticker}'"
+
+        data = data.head(10)
+        lines = [f"# Share Unlock Schedule (限售解禁) for {ticker.upper()}"]
+        lines.append(f"# Data source: Tushare")
+        lines.append(f"# Upcoming unlocks create potential selling pressure\n")
+
+        for _, row in data.iterrows():
+            float_date = row.get("float_date", "?")
+            float_share = row.get("float_share", "?")
+            float_ratio = row.get("float_ratio", "?")
+            holder_name = row.get("holder_name", "?")
+            lines.append(
+                f"Unlock Date: {float_date}, Shares: {float_share}万股, "
+                f"Ratio: {float_ratio}%, Holder: {holder_name}"
+            )
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"Share unlock data unavailable for {ticker}: {str(e)}"
+

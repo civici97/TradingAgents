@@ -75,3 +75,61 @@ def get_income_statement(
         str: A formatted report containing income statement data
     """
     return route_to_vendor("get_income_statement", ticker, freq, curr_date)
+
+
+# ============================================================================
+# A-Share Specific Tools (Tushare only, no vendor routing)
+# ============================================================================
+
+@tool
+def get_holder_count(
+    ticker: Annotated[str, "ticker symbol"],
+) -> str:
+    """
+    Get shareholder count trends (股东人数变化) for Chinese A-share stocks.
+    A decreasing holder count indicates chip concentration (筹码集中), typically bullish.
+    An increasing holder count indicates chip dispersion, typically bearish.
+    Only works for A-share stocks (.SS/.SH/.SZ tickers).
+    """
+    from tradingagents.dataflows.tushare_provider import get_holder_count as _get
+    return _get(ticker)
+
+
+@tool
+def get_top_holders(
+    ticker: Annotated[str, "ticker symbol"],
+) -> str:
+    """
+    Get top 10 shareholders and northbound fund holdings (十大股东 + 北向资金).
+    Shows institutional ownership, major shareholder changes, and foreign capital flows.
+    Only works for A-share stocks (.SS/.SH/.SZ tickers).
+    """
+    from tradingagents.dataflows.tushare_provider import get_top_holders as _get
+    return _get(ticker)
+
+
+@tool
+def get_margin_data(
+    ticker: Annotated[str, "ticker symbol"],
+) -> str:
+    """
+    Get margin trading data (融资融券) for Chinese A-share stocks.
+    Rising margin balance indicates leveraged bullish sentiment.
+    Falling margin balance indicates deleveraging or bearish sentiment.
+    Only works for A-share stocks (.SS/.SH/.SZ tickers).
+    """
+    from tradingagents.dataflows.tushare_provider import get_margin_data as _get
+    return _get(ticker)
+
+
+@tool
+def get_share_unlock(
+    ticker: Annotated[str, "ticker symbol"],
+) -> str:
+    """
+    Get share unlock schedule (限售解禁) for Chinese A-share stocks.
+    Upcoming large unlock events create potential selling pressure.
+    Only works for A-share stocks (.SS/.SH/.SZ tickers).
+    """
+    from tradingagents.dataflows.tushare_provider import get_share_unlock as _get
+    return _get(ticker)
