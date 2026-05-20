@@ -974,9 +974,12 @@ def format_tool_args(args, max_length=80) -> str:
         return result[:max_length - 3] + "..."
     return result
 
-def run_analysis(checkpoint: bool = False):
-    # First get all user selections
-    selections = get_user_selections()
+def run_analysis(checkpoint: bool = False, cli_selections: dict = None):
+    # Use pre-built selections or get them interactively
+    if cli_selections is not None:
+        selections = cli_selections
+    else:
+        selections = get_user_selections()
 
     # Create config with selected research depth
     config = DEFAULT_CONFIG.copy()
@@ -1263,6 +1266,102 @@ def run_analysis(checkpoint: bool = False):
         display_complete_report(final_state)
 
 
+# Provider → backend URL mapping (matches select_llm_provider in utils.py)
+_PROVIDER_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "google": None,
+    "anthropic": "https://api.anthropic.com/",
+    "xai": "https://api.x.ai/v1",
+    "deepseek": "https://api.deepseek.com",
+    "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "qwen-cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "glm": "https://api.z.ai/api/paas/v4/",
+    "glm-cn": "https://open.bigmodel.cn/api/paas/v4/",
+    "minimax": "https://api.minimax.io/v1",
+    "minimax-cn": "https://api.minimaxi.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "azure": None,
+    "ollama": "http://localhost:11434/v1",
+}
+
+# Default model per provider (quick / deep)
+_PROVIDER_DEFAULT_MODELS = {
+    "deepseek": ("deepseek-chat", "deepseek-reasoner"),
+    "openai": ("gpt-5.4-mini", "gpt-5.4"),
+    "google": ("gemini-2.5-flash", "gemini-2.5-pro"),
+    "anthropic": ("claude-sonnet-4-20250514", "claude-sonnet-4-20250514"),
+    "xai": ("grok-3-mini-fast", "grok-3-mini"),
+    "qwen": ("qwen-plus", "qwen-max"),
+    "qwen-cn": ("qwen-plus", "qwen-max"),
+    "glm": ("glm-4-flash", "glm-4-plus"),
+    "glm-cn": ("glm-4-flash", "glm-4-plus"),
+    "minimax": ("MiniMax-M1", "MiniMax-M1"),
+    "minimax-cn": ("MiniMax-M1", "MiniMax-M1"),
+}
+
+
+def _build_selections_from_args(
+    ticker: str,
+    date: str,
+    provider: str,
+    quick_llm: str = None,
+    deep_llm: str = None,
+    language: str = "Chinese",
+    analysts: str = "all",
+    depth: int = 1,
+) -> dict:
+    """Build a selections dict from CLI arguments, matching get_user_selections() output."""
+    from cli.models import AnalystType
+
+    # Resolve provider URL
+    provider_lower = provider.lower()
+    backend_url = _PROVIDER_URLS.get(provider_lower)
+
+    # Resolve default models if not specified
+    defaults = _PROVIDER_DEFAULT_MODELS.get(provider_lower, ("", ""))
+    if not quick_llm:
+        quick_llm = defaults[0]
+    if not deep_llm:
+        deep_llm = defaults[1]
+
+    # Parse analysts
+    analyst_map = {
+        "market": AnalystType.MARKET,
+        "social": AnalystType.SOCIAL,
+        "news": AnalystType.NEWS,
+        "fundamentals": AnalystType.FUNDAMENTALS,
+    }
+    if analysts.lower() == "all":
+        selected_analysts = list(analyst_map.values())
+    else:
+        selected_analysts = []
+        for a in analysts.split(","):
+            a = a.strip().lower()
+            if a in analyst_map:
+                selected_analysts.append(analyst_map[a])
+        if not selected_analysts:
+            selected_analysts = list(analyst_map.values())
+
+    # Detect asset type
+    asset_type = detect_asset_type(ticker.upper())
+
+    return {
+        "ticker": ticker.strip().upper(),
+        "asset_type": asset_type.value,
+        "analysis_date": date,
+        "analysts": selected_analysts,
+        "research_depth": depth,
+        "llm_provider": provider_lower,
+        "backend_url": backend_url,
+        "shallow_thinker": quick_llm,
+        "deep_thinker": deep_llm,
+        "google_thinking_level": None,
+        "openai_reasoning_effort": None,
+        "anthropic_effort": None,
+        "output_language": language,
+    }
+
+
 @app.command()
 def analyze(
     checkpoint: bool = typer.Option(
@@ -1275,13 +1374,81 @@ def analyze(
         "--clear-checkpoints",
         help="Delete all saved checkpoints before running (force fresh start).",
     ),
+    ticker: Optional[str] = typer.Option(
+        None,
+        "--ticker", "-t",
+        help="Ticker symbol to analyze (e.g. SPY, 600989.SS, 0700.HK). Skips interactive prompt.",
+    ),
+    date: Optional[str] = typer.Option(
+        None,
+        "--date", "-d",
+        help="Analysis date in YYYY-MM-DD format. Defaults to today.",
+    ),
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider", "-p",
+        help="LLM provider (e.g. deepseek, openai, google, anthropic).",
+    ),
+    quick_llm: Optional[str] = typer.Option(
+        None,
+        "--quick-llm",
+        help="Quick-thinking model ID (e.g. deepseek-chat). Uses provider default if omitted.",
+    ),
+    deep_llm: Optional[str] = typer.Option(
+        None,
+        "--deep-llm",
+        help="Deep-thinking model ID (e.g. deepseek-reasoner). Uses provider default if omitted.",
+    ),
+    language: Optional[str] = typer.Option(
+        None,
+        "--language", "-l",
+        help="Output language (e.g. Chinese, English, Japanese).",
+    ),
+    analysts: Optional[str] = typer.Option(
+        None,
+        "--analysts", "-a",
+        help="Comma-separated analyst types: market,social,news,fundamentals. Use 'all' for all.",
+    ),
+    depth: Optional[int] = typer.Option(
+        None,
+        "--depth",
+        help="Research depth: 1 (shallow), 3 (medium), 5 (deep).",
+    ),
 ):
     if clear_checkpoints:
         from tradingagents.graph.checkpointer import clear_all_checkpoints
         n = clear_all_checkpoints(DEFAULT_CONFIG["data_cache_dir"])
         console.print(f"[yellow]Cleared {n} checkpoint(s).[/yellow]")
-    run_analysis(checkpoint=checkpoint)
+
+    # If ticker and provider are both specified, run non-interactively
+    if ticker and provider:
+        if date is None:
+            date = datetime.datetime.now().strftime("%Y-%m-%d")
+        cli_selections = _build_selections_from_args(
+            ticker=ticker,
+            date=date,
+            provider=provider,
+            quick_llm=quick_llm,
+            deep_llm=deep_llm,
+            language=language or "Chinese",
+            analysts=analysts or "all",
+            depth=depth or 1,
+        )
+        console.print(f"[green]Running non-interactive analysis:[/green]")
+        console.print(f"  Ticker: {cli_selections['ticker']}")
+        console.print(f"  Date: {cli_selections['analysis_date']}")
+        console.print(f"  Provider: {cli_selections['llm_provider']}")
+        console.print(f"  Quick LLM: {cli_selections['shallow_thinker']}")
+        console.print(f"  Deep LLM: {cli_selections['deep_thinker']}")
+        console.print(f"  Language: {cli_selections['output_language']}")
+        console.print(f"  Analysts: {', '.join(a.value for a in cli_selections['analysts'])}")
+        console.print(f"  Depth: {cli_selections['research_depth']}")
+        console.print()
+        run_analysis(checkpoint=checkpoint, cli_selections=cli_selections)
+    else:
+        run_analysis(checkpoint=checkpoint)
 
 
 if __name__ == "__main__":
     app()
+

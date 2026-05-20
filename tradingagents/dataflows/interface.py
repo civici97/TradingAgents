@@ -22,7 +22,24 @@ from .alpha_vantage import (
     get_news as get_alpha_vantage_news,
     get_global_news as get_alpha_vantage_global_news,
 )
+from .tushare_provider import (
+    get_stock_data as get_tushare_stock,
+    get_indicators as get_tushare_indicators,
+    get_fundamentals as get_tushare_fundamentals,
+    get_balance_sheet as get_tushare_balance_sheet,
+    get_cashflow as get_tushare_cashflow,
+    get_income_statement as get_tushare_income_statement,
+    get_news as get_tushare_news,
+    get_global_news as get_tushare_global_news,
+    get_insider_transactions as get_tushare_insider_transactions,
+    TushareRateLimitError,
+)
 from .alpha_vantage_common import AlphaVantageRateLimitError
+
+try:
+    from yfinance.exceptions import YFRateLimitError
+except ImportError:
+    YFRateLimitError = None
 
 # Configuration and routing logic
 from .config import get_config
@@ -61,6 +78,7 @@ TOOLS_CATEGORIES = {
 }
 
 VENDOR_LIST = [
+    "tushare",
     "yfinance",
     "alpha_vantage",
 ]
@@ -69,41 +87,50 @@ VENDOR_LIST = [
 VENDOR_METHODS = {
     # core_stock_apis
     "get_stock_data": {
+        "tushare": get_tushare_stock,
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
     },
     # technical_indicators
     "get_indicators": {
+        "tushare": get_tushare_indicators,
         "alpha_vantage": get_alpha_vantage_indicator,
         "yfinance": get_stock_stats_indicators_window,
     },
     # fundamental_data
     "get_fundamentals": {
+        "tushare": get_tushare_fundamentals,
         "alpha_vantage": get_alpha_vantage_fundamentals,
         "yfinance": get_yfinance_fundamentals,
     },
     "get_balance_sheet": {
+        "tushare": get_tushare_balance_sheet,
         "alpha_vantage": get_alpha_vantage_balance_sheet,
         "yfinance": get_yfinance_balance_sheet,
     },
     "get_cashflow": {
+        "tushare": get_tushare_cashflow,
         "alpha_vantage": get_alpha_vantage_cashflow,
         "yfinance": get_yfinance_cashflow,
     },
     "get_income_statement": {
+        "tushare": get_tushare_income_statement,
         "alpha_vantage": get_alpha_vantage_income_statement,
         "yfinance": get_yfinance_income_statement,
     },
     # news_data
     "get_news": {
+        "tushare": get_tushare_news,
         "alpha_vantage": get_alpha_vantage_news,
         "yfinance": get_news_yfinance,
     },
     "get_global_news": {
+        "tushare": get_tushare_global_news,
         "yfinance": get_global_news_yfinance,
         "alpha_vantage": get_alpha_vantage_global_news,
     },
     "get_insider_transactions": {
+        "tushare": get_tushare_insider_transactions,
         "alpha_vantage": get_alpha_vantage_insider_transactions,
         "yfinance": get_yfinance_insider_transactions,
     },
@@ -147,6 +174,12 @@ def route_to_vendor(method: str, *args, **kwargs):
         if vendor not in fallback_vendors:
             fallback_vendors.append(vendor)
 
+    # Rate-limit exceptions that trigger fallback to the next vendor
+    _rate_limit_errors = [AlphaVantageRateLimitError, TushareRateLimitError]
+    if YFRateLimitError is not None:
+        _rate_limit_errors.append(YFRateLimitError)
+    rate_limit_errors = tuple(_rate_limit_errors)
+
     for vendor in fallback_vendors:
         if vendor not in VENDOR_METHODS[method]:
             continue
@@ -156,7 +189,7 @@ def route_to_vendor(method: str, *args, **kwargs):
 
         try:
             return impl_func(*args, **kwargs)
-        except AlphaVantageRateLimitError:
-            continue  # Only rate limits trigger fallback
+        except rate_limit_errors:
+            continue  # Rate limits trigger fallback
 
     raise RuntimeError(f"No available vendor for '{method}'")

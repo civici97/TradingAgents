@@ -8,13 +8,15 @@ Reddit/X/StockTwits content under prompt pressure (verified live).
 The redesigned agent pre-fetches three complementary data sources before
 the LLM is invoked and injects them into the prompt as structured blocks:
 
-  1. News headlines     — Yahoo Finance (institutional framing)
-  2. StockTwits messages — retail-trader posts indexed by cashtag, with
-                           user-labeled Bullish/Bearish sentiment tags
-  3. Reddit posts        — r/wallstreetbets, r/stocks, r/investing
+  For US/international stocks:
+    1. News headlines     — Yahoo Finance (institutional framing)
+    2. StockTwits messages — retail-trader posts indexed by cashtag
+    3. Reddit posts        — r/wallstreetbets, r/stocks, r/investing
 
-The agent does not use tool-calling; the data is in the prompt from
-turn 0. The LLM produces the sentiment report in a single invocation.
+  For Chinese A-share stocks:
+    1. News headlines     — Tushare / Yahoo Finance
+    2. 雪球 (Xueqiu)      — China's StockTwits, investor social platform
+    3. 东方财富股吧 (East Money Guba) — China's Reddit for stocks
 
 See: https://github.com/TauricResearch/TradingAgents/issues/557
 """
@@ -29,6 +31,17 @@ from tradingagents.agents.utils.agent_utils import (
 )
 from tradingagents.dataflows.reddit import fetch_reddit_posts
 from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
+from tradingagents.dataflows.xueqiu import fetch_xueqiu_posts
+from tradingagents.dataflows.eastmoney import fetch_eastmoney_posts
+
+
+_CN_SUFFIXES = (".SS", ".SH", ".SZ")
+
+
+def _is_cn_stock(ticker: str) -> bool:
+    """Detect if a ticker is a Chinese A-share stock."""
+    t = ticker.strip().upper()
+    return t.endswith(_CN_SUFFIXES)
 
 
 def _seven_days_back(trade_date: str) -> str:
@@ -38,9 +51,10 @@ def _seven_days_back(trade_date: str) -> str:
 def create_sentiment_analyst(llm):
     """Create a sentiment analyst node for the trading graph.
 
-    Pre-fetches news + StockTwits + Reddit data, injects them into the
-    prompt as structured blocks, and produces a sentiment report in a
-    single LLM call.
+    Pre-fetches news + social media data, injects them into the prompt
+    as structured blocks, and produces a sentiment report in a single
+    LLM call.  Automatically selects Chinese or US social platforms
+    based on ticker suffix.
     """
 
     def sentiment_analyst_node(state):
@@ -49,20 +63,32 @@ def create_sentiment_analyst(llm):
         start_date = _seven_days_back(end_date)
         instrument_context = build_instrument_context(ticker)
 
-        # Pre-fetch all three sources. Each fetcher degrades gracefully and
-        # returns a string (no exceptions surface from here), so the LLM
-        # always sees something — either real data or a clear placeholder.
+        # Pre-fetch all sources. Each fetcher degrades gracefully.
         news_block = get_news.func(ticker, start_date, end_date)
-        stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
-        reddit_block = fetch_reddit_posts(ticker)
 
-        system_message = _build_system_message(
-            ticker=ticker,
-            start_date=start_date,
-            end_date=end_date,
-            news_block=news_block,
-            stocktwits_block=stocktwits_block,
-            reddit_block=reddit_block,
+        if _is_cn_stock(ticker):
+            # Chinese A-share: use 雪球 + 东方财富股吧
+            social_block_1 = fetch_xueqiu_posts(ticker, limit=20)
+            social_block_2 = fetch_eastmoney_posts(ticker, limit=20)
+            system_message = _build_cn_system_message(
+                ticker=ticker,
+                start_date=start_date,
+                end_date=end_date,
+                news_block=news_block,
+                xueqiu_block=social_block_1,
+                eastmoney_block=social_block_2,
+            )
+        else:
+            # US/international: use StockTwits + Reddit
+            stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
+            reddit_block = fetch_reddit_posts(ticker)
+            system_message = _build_system_message(
+                ticker=ticker,
+                start_date=start_date,
+                end_date=end_date,
+                news_block=news_block,
+                stocktwits_block=stocktwits_block,
+                reddit_block=reddit_block,
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -162,6 +188,72 @@ Produce a sentiment report covering, in order:
 {get_language_instruction()}"""
 
 
+def _build_cn_system_message(
+    *,
+    ticker: str,
+    start_date: str,
+    end_date: str,
+    news_block: str,
+    xueqiu_block: str,
+    eastmoney_block: str,
+) -> str:
+    """Assemble the sentiment-analyst system message for Chinese A-share stocks."""
+    return f"""You are a financial market sentiment analyst specializing in Chinese A-share stocks. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on three complementary data sources that have already been collected for you.
+
+## Data sources (pre-fetched, in this prompt)
+
+### 新闻 (News) — past 7 days
+Institutional framing. Fact-driven, slower-moving signal.
+
+<start_of_news>
+{news_block}
+<end_of_news>
+
+### 雪球 (Xueqiu/Snowball) — China's leading investor social platform
+Similar to StockTwits. Per-stock discussion feed with investor opinions and analysis. Each post includes engagement metrics (likes, replies). Sentiment is detected via keyword analysis.
+
+<start_of_xueqiu>
+{xueqiu_block}
+<end_of_xueqiu>
+
+### 东方财富股吧 (East Money Guba) — China's largest stock discussion forum
+Similar to Reddit r/wallstreetbets but organized per-stock. High volume of retail investor posts with titles reflecting current sentiment and hot topics.
+
+<start_of_eastmoney>
+{eastmoney_block}
+<end_of_eastmoney>
+
+## How to analyze this data (best practices)
+
+1. **Read the 雪球 看多/看空 (Bullish/Bearish) ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; ≥90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters.
+
+2. **Look for cross-source divergences.** If news framing is bearish but 雪球 is overwhelmingly bullish, that mismatch is itself a signal.
+
+3. **Weight 东方财富股吧 posts by frequency of recurring themes.** What topics keep coming up? That's the dominant narrative driving current sentiment.
+
+4. **Distinguish opinion from event.** A news headline about earnings is an event; a 雪球 post saying "加仓！" is opinion. Both are inputs but should be weighted differently.
+
+5. **Identify recurring narrative themes.** What topic keeps coming up across sources? That's the dominant narrative driving current sentiment.
+
+6. **Be honest about data limits.** If one or more sources returned an "<unavailable>" placeholder, the sentiment read is less robust — flag this caveat explicitly.
+
+7. **Identify catalysts and risks** — policy changes (e.g. 产业政策), earnings reports, sector rotation, macro headlines (e.g. 降息, 降准).
+
+8. **Consider A-share market characteristics** — pay attention to 涨停/跌停 (price limit) mentions, 主力/游资 (institutional vs hot money) dynamics, 北向资金 (northbound fund flows).
+
+## Output
+
+Produce a sentiment report covering, in order:
+
+1. **Overall sentiment direction** — 看多/Bullish / 看空/Bearish / 中性/Neutral / 分歧/Mixed — with a brief confidence note based on data quality and sample size.
+2. **Source-by-source breakdown** — what each of news / 雪球 / 东方财富股吧 is telling you, with specific evidence (cite post counts, ratios, notable posts).
+3. **Divergences, alignments, and key narratives** across sources.
+4. **Catalysts and risks** surfaced by the data.
+5. **Markdown table** at the end summarizing key sentiment signals, their direction, source, and supporting evidence.
+
+{get_language_instruction()}"""
+
+
 # ---------------------------------------------------------------------------
 # Backwards-compatibility shim
 # ---------------------------------------------------------------------------
@@ -182,3 +274,4 @@ def create_social_media_analyst(llm):
         stacklevel=2,
     )
     return create_sentiment_analyst(llm)
+
