@@ -17,9 +17,11 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
+    "TRADINGAGENTS_DATA_VENDORS_CORE":    "data_vendors.core_stock_apis",
+    "TRADINGAGENTS_DATA_VENDORS_TECH":    "data_vendors.technical_indicators",
+    "TRADINGAGENTS_DATA_VENDORS_FUND":    "data_vendors.fundamental_data",
+    "TRADINGAGENTS_DATA_VENDORS_NEWS":    "data_vendors.news_data",
 }
-
-
 def _coerce(value: str, reference):
     """Coerce env-var string to the type of the existing default value."""
     if isinstance(reference, bool):
@@ -37,7 +39,14 @@ def _apply_env_overrides(config: dict) -> dict:
         raw = os.environ.get(env_var)
         if raw is None or raw == "":
             continue
-        config[key] = _coerce(raw, config.get(key))
+        if "." in key:
+            parts = key.split(".")
+            d = config
+            for part in parts[:-1]:
+                d = d.setdefault(part, {})
+            d[parts[-1]] = _coerce(raw, d.get(parts[-1]))
+        else:
+            config[key] = _coerce(raw, config.get(key))
     return config
 
 
@@ -95,9 +104,9 @@ DEFAULT_CONFIG = _apply_env_overrides({
     # vendor is used; if it rate-limits or errors, the next is tried.
     # Vendors whose package is not installed are silently skipped.
     "data_vendors": {
-        "core_stock_apis": "joinquant,tushare,akshare,yfinance",
-        "technical_indicators": "joinquant,tushare,akshare,yfinance",
-        "fundamental_data": "joinquant,tushare,akshare,yfinance",
+        "core_stock_apis": "akshare,tushare,joinquant,yfinance",
+        "technical_indicators": "akshare,tushare,joinquant,yfinance",
+        "fundamental_data": "akshare,tushare,joinquant,yfinance",
         "news_data": "akshare,tushare,yfinance",
     },
     # Tool-level configuration (takes precedence over category-level)

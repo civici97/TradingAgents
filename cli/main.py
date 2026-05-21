@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 import datetime
 import typer
 import questionary
@@ -32,6 +32,15 @@ from cli.models import AnalystType
 from cli.utils import *
 from cli.announcements import fetch_announcements, display_announcements
 from cli.stats_handler import StatsCallbackHandler
+from cli.preferences import save_selections as _save_prefs
+from cli.watchlist import (
+    add_to_watchlist,
+    remove_from_watchlist,
+    get_watchlist,
+    watchlist_display_label,
+    find_in_watchlist,
+)
+from cli.stock_search import search_stocks
 
 console = Console()
 
@@ -501,19 +510,25 @@ def get_user_selections():
             box_content += f"\n[dim]Default: {default}[/dim]"
         return Panel(box_content, border_style="blue", padding=(1, 2))
 
-    # Step 1: Ticker symbol
+    # Step 1: Ticker symbol(s) — supports batch
     console.print(
         create_question_box(
             "Step 1: Ticker Symbol",
-            "Enter the exact ticker symbol to analyze, including exchange suffix when needed (examples: SPY, CNC.TO, 7203.T, 0700.HK)",
+            "Select one or more tickers to analyze (supports watchlist, search, or direct input)",
             "SPY",
         )
     )
-    selected_ticker = get_ticker()
-    asset_type = detect_asset_type(selected_ticker)
-    console.print(
-        f"[green]Detected asset type:[/green] {asset_type.value}"
-    )
+    selected_tickers = get_tickers()
+    # Show summary and determine the asset type (use first ticker for analyst filtering)
+    asset_type = None
+    for t in selected_tickers:
+        at = detect_asset_type(t)
+        if asset_type is None:
+            asset_type = at
+        console.print(
+            f"[green]✓[/green] {t}  [dim]({at.value})[/dim]"
+        )
+    console.print()
 
     # Step 2: Analysis date
     default_date = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -623,8 +638,7 @@ def get_user_selections():
         anthropic_effort = ask_anthropic_effort()
 
     return {
-        "ticker": selected_ticker,
-        "asset_type": asset_type.value,
+        "tickers": selected_tickers,
         "analysis_date": analysis_date,
         "analysts": selected_analysts,
         "research_depth": selected_research_depth,
@@ -637,29 +651,6 @@ def get_user_selections():
         "anthropic_effort": anthropic_effort,
         "output_language": output_language,
     }
-
-
-def get_ticker():
-    """Get ticker symbol from user input, preserving exchange suffixes."""
-    # typer.prompt strips trailing dot-suffixes on some shells (e.g. 000404.SH
-    # collapses to 000404). questionary.text reads the raw line.
-    ticker = questionary.text(
-        "",
-        validate=lambda value: (
-            not value.strip()
-            or (
-                all(ch.isalnum() or ch in "._-^" for ch in value.strip())
-                and len(value.strip()) <= 32
-            )
-        )
-        or "Please enter a valid ticker symbol, e.g. AAPL, 000404.SZ, 0700.HK.",
-    ).ask()
-
-    if ticker is None:
-        console.print("\n[red]No ticker symbol provided. Exiting...[/red]")
-        raise typer.Exit(1)
-
-    return (ticker.strip() or "SPY").upper()
 
 
 def get_analysis_date():
@@ -981,6 +972,25 @@ def run_analysis(checkpoint: bool = False, cli_selections: dict = None):
     else:
         selections = get_user_selections()
 
+    # Handle batch mode: if selections contains "tickers" list, loop over them
+    tickers = selections.get("tickers")
+    if tickers and isinstance(tickers, list):
+        for i, ticker in enumerate(tickers):
+            if len(tickers) > 1:
+                console.print(f"\n[bold cyan]━━━ 批量分析 [{i+1}/{len(tickers)}]: {ticker} ━━━[/bold cyan]\n")
+            single_sel = selections.copy()
+            single_sel["ticker"] = ticker
+            single_sel["asset_type"] = detect_asset_type(ticker).value
+            single_sel.pop("tickers", None)
+            _run_single_analysis(checkpoint=checkpoint, selections=single_sel)
+        return
+
+    # Single ticker mode (from CLI args or legacy)
+    _run_single_analysis(checkpoint=checkpoint, selections=selections)
+
+
+def _run_single_analysis(checkpoint: bool = False, selections: dict = None):
+
     # Create config with selected research depth
     config = DEFAULT_CONFIG.copy()
     config["max_debate_rounds"] = selections["research_depth"]
@@ -995,6 +1005,9 @@ def run_analysis(checkpoint: bool = False, cli_selections: dict = None):
     config["anthropic_effort"] = selections.get("anthropic_effort")
     config["output_language"] = selections.get("output_language", "English")
     config["checkpoint_enabled"] = checkpoint
+
+    # Save user preferences for next run
+    _save_prefs(selections)
 
     # Create stats callback handler for tracking LLM/tool calls
     stats_handler = StatsCallbackHandler()
@@ -1265,6 +1278,25 @@ def run_analysis(checkpoint: bool = False, cli_selections: dict = None):
     if display_choice in ("Y", "YES", ""):
         display_complete_report(final_state)
 
+    # Prompt to add ticker to watchlist
+    ticker = selections["ticker"]
+    if not find_in_watchlist(ticker):
+        # Try to look up stock name from search cache
+        stock_name = ""
+        results = search_stocks(ticker.split(".")[0]) if ticker.split(".")[0].isdigit() else []
+        for r in results:
+            if r.get("ticker") == ticker:
+                stock_name = r.get("name", "")
+                break
+        display_name = f"{ticker} ({stock_name})" if stock_name else ticker
+        wl_choice = typer.prompt(
+            f"\nAdd {display_name} to watchlist?",
+            default="Y",
+        ).strip().upper()
+        if wl_choice in ("Y", "YES", ""):
+            add_to_watchlist(ticker, stock_name)
+            console.print(f"[green]✓ {display_name} added to watchlist[/green]")
+
 
 # Provider → backend URL mapping (matches select_llm_provider in utils.py)
 _PROVIDER_URLS = {
@@ -1377,7 +1409,7 @@ def analyze(
     ticker: Optional[str] = typer.Option(
         None,
         "--ticker", "-t",
-        help="Ticker symbol to analyze (e.g. SPY, 600989.SS, 0700.HK). Skips interactive prompt.",
+        help="Ticker symbol(s) to analyze, comma-separated for batch (e.g. SPY, 600989.SS,000001.SZ). Skips interactive prompt.",
     ),
     date: Optional[str] = typer.Option(
         None,
@@ -1424,31 +1456,108 @@ def analyze(
     if ticker and provider:
         if date is None:
             date = datetime.datetime.now().strftime("%Y-%m-%d")
-        cli_selections = _build_selections_from_args(
-            ticker=ticker,
-            date=date,
-            provider=provider,
-            quick_llm=quick_llm,
-            deep_llm=deep_llm,
-            language=language or "Chinese",
-            analysts=analysts or "all",
-            depth=depth or 1,
-        )
-        console.print(f"[green]Running non-interactive analysis:[/green]")
-        console.print(f"  Ticker: {cli_selections['ticker']}")
-        console.print(f"  Date: {cli_selections['analysis_date']}")
-        console.print(f"  Provider: {cli_selections['llm_provider']}")
-        console.print(f"  Quick LLM: {cli_selections['shallow_thinker']}")
-        console.print(f"  Deep LLM: {cli_selections['deep_thinker']}")
-        console.print(f"  Language: {cli_selections['output_language']}")
-        console.print(f"  Analysts: {', '.join(a.value for a in cli_selections['analysts'])}")
-        console.print(f"  Depth: {cli_selections['research_depth']}")
-        console.print()
-        run_analysis(checkpoint=checkpoint, cli_selections=cli_selections)
+
+        # Support comma-separated tickers for batch mode
+        ticker_list = [t.strip() for t in ticker.split(",") if t.strip()]
+
+        for i, single_ticker in enumerate(ticker_list):
+            if len(ticker_list) > 1:
+                console.print(f"\n[bold cyan]━━━ 批量分析 [{i+1}/{len(ticker_list)}]: {single_ticker} ━━━[/bold cyan]\n")
+
+            cli_selections = _build_selections_from_args(
+                ticker=single_ticker,
+                date=date,
+                provider=provider,
+                quick_llm=quick_llm,
+                deep_llm=deep_llm,
+                language=language or "Chinese",
+                analysts=analysts or "all",
+                depth=depth or 1,
+            )
+            console.print(f"[green]Running non-interactive analysis:[/green]")
+            console.print(f"  Ticker: {cli_selections['ticker']}")
+            console.print(f"  Date: {cli_selections['analysis_date']}")
+            console.print(f"  Provider: {cli_selections['llm_provider']}")
+            console.print(f"  Quick LLM: {cli_selections['shallow_thinker']}")
+            console.print(f"  Deep LLM: {cli_selections['deep_thinker']}")
+            console.print(f"  Language: {cli_selections['output_language']}")
+            console.print(f"  Analysts: {', '.join(a.value for a in cli_selections['analysts'])}")
+            console.print(f"  Depth: {cli_selections['research_depth']}")
+            console.print()
+            run_analysis(checkpoint=checkpoint, cli_selections=cli_selections)
     else:
         run_analysis(checkpoint=checkpoint)
 
 
+# ── Watchlist subcommand ────────────────────────────────────────────────────
+
+watchlist_app = typer.Typer(
+    name="watchlist",
+    help="Manage your stock watchlist (add, remove, list).",
+)
+app.add_typer(watchlist_app, name="watchlist")
+
+
+@watchlist_app.command("list")
+def watchlist_list():
+    """List all stocks in your watchlist."""
+    entries = get_watchlist()
+    if not entries:
+        console.print("[yellow]Watchlist is empty.[/yellow]")
+        console.print("[dim]Stocks are automatically added after analysis, "
+                      "or use: tradingagents watchlist add <TICKER>[/dim]")
+        return
+
+    table = Table(
+        title="📊 Watchlist",
+        show_header=True,
+        header_style="bold magenta",
+        box=box.ROUNDED,
+    )
+    table.add_column("Ticker", style="cyan", justify="center")
+    table.add_column("Name", style="green")
+    table.add_column("Added", style="dim")
+
+    for e in entries:
+        table.add_row(e.get("ticker", ""), e.get("name", ""), e.get("added_at", ""))
+
+    console.print(table)
+
+
+@watchlist_app.command("add")
+def watchlist_add(
+    ticker: str = typer.Argument(..., help="Ticker symbol to add (e.g. 300750.SZ, AAPL)"),
+    name: str = typer.Option("", "--name", "-n", help="Stock name (optional, auto-detected for A-shares)"),
+):
+    """Add a stock to your watchlist."""
+    ticker = ticker.strip().upper()
+
+    # Auto-detect name for A-share stocks if not provided
+    if not name and ticker.split(".")[0].isdigit():
+        results = search_stocks(ticker.split(".")[0])
+        for r in results:
+            if r.get("ticker") == ticker:
+                name = r.get("name", "")
+                break
+
+    if add_to_watchlist(ticker, name):
+        display = f"{ticker} ({name})" if name else ticker
+        console.print(f"[green]✓ Added {display} to watchlist[/green]")
+    else:
+        console.print(f"[yellow]{ticker} is already in your watchlist[/yellow]")
+
+
+@watchlist_app.command("remove")
+def watchlist_remove(
+    ticker: str = typer.Argument(..., help="Ticker symbol to remove"),
+):
+    """Remove a stock from your watchlist."""
+    ticker = ticker.strip().upper()
+    if remove_from_watchlist(ticker):
+        console.print(f"[green]✓ Removed {ticker} from watchlist[/green]")
+    else:
+        console.print(f"[yellow]{ticker} not found in watchlist[/yellow]")
+
+
 if __name__ == "__main__":
     app()
-

@@ -7,6 +7,18 @@ from dotenv import find_dotenv, set_key
 from rich.console import Console
 
 from cli.models import AnalystType, AssetType
+from cli.watchlist import (
+    get_watchlist,
+    add_to_watchlist,
+    watchlist_display_label,
+)
+from cli.stock_search import (
+    search_stocks,
+    search_display_label,
+    is_a_share_input,
+    refresh_stock_list,
+)
+from cli.preferences import get_pref
 from tradingagents.llm_clients.api_key_env import get_api_key_env
 from tradingagents.llm_clients.model_catalog import get_model_options
 
@@ -25,7 +37,178 @@ CRYPTO_SUFFIXES = ("-USD", "-USDT", "-USDC", "-BTC", "-ETH")
 
 
 def get_ticker() -> str:
-    """Prompt the user to enter a ticker symbol."""
+    """Enhanced ticker picker with three modes: watchlist, search, direct input."""
+    watchlist = get_watchlist()
+
+    # Build mode choices
+    mode_choices: list[questionary.Choice] = []
+    if watchlist:
+        mode_choices.append(
+            questionary.Choice(
+                f"从自选股中选择  ({len(watchlist)} 只)",
+                value="watchlist",
+            )
+        )
+    mode_choices.append(
+        questionary.Choice(
+            "搜索股票（支持名称 / 拼音首字母 / 代码）",
+            value="search",
+        )
+    )
+    mode_choices.append(
+        questionary.Choice(
+            f"直接输入代码  ({TICKER_INPUT_EXAMPLES})",
+            value="direct",
+        )
+    )
+
+    mode = questionary.select(
+        "选择输入方式:",
+        choices=mode_choices,
+        style=questionary.Style(
+            [
+                ("selected", "fg:green noinherit"),
+                ("highlighted", "fg:green noinherit"),
+                ("pointer", "fg:green noinherit"),
+            ]
+        ),
+    ).ask()
+
+    if mode is None:
+        console.print("\n[red]Cancelled. Exiting...[/red]")
+        exit(1)
+
+    if mode == "watchlist":
+        return _pick_from_watchlist(watchlist)
+    elif mode == "search":
+        return _search_and_pick()
+    else:
+        return _direct_ticker_input()
+
+
+def get_tickers() -> list[str]:
+    """Get one or more ticker symbols (supports batch input).
+
+    After picking the first ticker via the standard picker, offers to
+    add more tickers for batch analysis.
+    """
+    first = get_ticker()
+    tickers = [first]
+
+    while True:
+        add_more = questionary.confirm(
+            "是否继续添加更多股票进行批量分析？",
+            default=False,
+            style=questionary.Style(
+                [
+                    ("highlighted", "fg:yellow noinherit"),
+                ]
+            ),
+        ).ask()
+        if not add_more:
+            break
+        next_ticker = get_ticker()
+        if next_ticker not in tickers:
+            tickers.append(next_ticker)
+        else:
+            console.print(f"[yellow]{next_ticker} 已在列表中，跳过[/yellow]")
+
+    return tickers
+
+
+def _pick_from_watchlist(watchlist: list[dict]) -> str:
+    """Let user pick a ticker from their watchlist."""
+    choices = [
+        questionary.Choice(
+            watchlist_display_label(entry),
+            value=entry["ticker"],
+        )
+        for entry in watchlist
+    ]
+    ticker = questionary.select(
+        "选择自选股:",
+        choices=choices,
+        style=questionary.Style(
+            [
+                ("selected", "fg:green noinherit"),
+                ("highlighted", "fg:green noinherit"),
+                ("pointer", "fg:green noinherit"),
+            ]
+        ),
+    ).ask()
+    if ticker is None:
+        console.print("\n[red]No ticker selected. Exiting...[/red]")
+        exit(1)
+    return ticker
+
+
+def _search_and_pick() -> str:
+    """Interactive search: user types a query, sees matching results, picks one."""
+    console.print("[dim]提示: 输入中文名(宁德时代)、拼音首字母(ndsdk)或6位代码(300750)[/dim]")
+    console.print("[dim]首次使用将从 akshare 下载 A 股列表并缓存，请稍候...[/dim]")
+
+    while True:
+        query = questionary.text(
+            "搜索:",
+            style=questionary.Style(
+                [
+                    ("text", "fg:green"),
+                    ("highlighted", "noinherit"),
+                ]
+            ),
+        ).ask()
+
+        if query is None:
+            console.print("\n[red]Cancelled. Exiting...[/red]")
+            exit(1)
+
+        query = query.strip()
+        if not query:
+            continue
+
+        # If the query looks like a full ticker already (e.g., AAPL, 0700.HK),
+        # just accept it directly.
+        if not is_a_share_input(query) and (
+            "." in query or query.isalpha()
+        ):
+            return normalize_ticker_symbol(query)
+
+        results = search_stocks(query)
+        if not results:
+            console.print("[yellow]未找到匹配的股票，请重新输入[/yellow]")
+            continue
+
+        choices = [
+            questionary.Choice(
+                search_display_label(r),
+                value=r["ticker"],
+            )
+            for r in results
+        ]
+        choices.append(questionary.Choice("重新搜索", value="__retry__"))
+
+        pick = questionary.select(
+            f"找到 {len(results)} 个结果:",
+            choices=choices,
+            style=questionary.Style(
+                [
+                    ("selected", "fg:green noinherit"),
+                    ("highlighted", "fg:green noinherit"),
+                    ("pointer", "fg:green noinherit"),
+                ]
+            ),
+        ).ask()
+
+        if pick is None:
+            console.print("\n[red]Cancelled. Exiting...[/red]")
+            exit(1)
+        if pick == "__retry__":
+            continue
+        return pick
+
+
+def _direct_ticker_input() -> str:
+    """Original direct ticker input."""
     ticker = questionary.text(
         f"Enter the exact ticker symbol to analyze ({TICKER_INPUT_EXAMPLES}):",
         validate=lambda x: len(x.strip()) > 0 or "Please enter a valid ticker symbol.",
@@ -102,18 +285,32 @@ def get_analysis_date() -> str:
 
 
 def select_analysts(asset_type: AssetType = AssetType.STOCK) -> List[AnalystType]:
-    """Select analysts using an interactive checkbox."""
+    """Select analysts using an interactive checkbox.
+
+    Pre-checks analysts that were selected in the previous session.
+    """
     available_analysts = filter_analysts_for_asset_type(
         [value for _, value in ANALYST_ORDER],
         asset_type,
     )
+
+    # Determine which analysts to pre-select from previous preferences
+    last_analysts = get_pref("last_analysts", [])
+    last_set = set(last_analysts) if last_analysts else set()
+
+    choices_list = []
+    for display, value in ANALYST_ORDER:
+        if value not in available_analysts:
+            continue
+        # Pre-check if was selected last time, or if no history (select all)
+        checked = value.value in last_set if last_set else True
+        choices_list.append(
+            questionary.Choice(display, value=value, checked=checked)
+        )
+
     choices = questionary.checkbox(
         "Select Your [Analysts Team]:",
-        choices=[
-            questionary.Choice(display, value=value)
-            for display, value in ANALYST_ORDER
-            if value in available_analysts
-        ],
+        choices=choices_list,
         instruction="\n- Press Space to select/unselect analysts\n- Press 'a' to select/unselect all\n- Press Enter when done",
         validate=lambda x: len(x) > 0 or "You must select at least one analyst.",
         style=questionary.Style(
@@ -134,7 +331,11 @@ def select_analysts(asset_type: AssetType = AssetType.STOCK) -> List[AnalystType
 
 
 def select_research_depth() -> int:
-    """Select research depth using an interactive selection."""
+    """Select research depth using an interactive selection.
+
+    Defaults to the last-used depth level.
+    """
+    last_depth = get_pref("last_depth", 1)
 
     # Define research depth options with their corresponding values
     DEPTH_OPTIONS = [
@@ -143,11 +344,23 @@ def select_research_depth() -> int:
         ("Deep - Comprehensive research, in depth debate and strategy discussion", 5),
     ]
 
+    # Mark last-used option
+    choices = []
+    for display, value in DEPTH_OPTIONS:
+        label = f"{display} ← (上次选择)" if value == last_depth else display
+        choices.append(questionary.Choice(label, value=value))
+
+    # Find the default index
+    default_val = None
+    for label, value in DEPTH_OPTIONS:
+        if value == last_depth:
+            default_val = value
+            break
+
     choice = questionary.select(
         "Select Your [Research Depth]:",
-        choices=[
-            questionary.Choice(display, value=value) for display, value in DEPTH_OPTIONS
-        ],
+        choices=choices,
+        default=default_val,
         instruction="\n- Use arrow keys to navigate\n- Press Enter to select",
         style=questionary.Style(
             [
@@ -260,7 +473,12 @@ def select_deep_thinking_agent(provider) -> str:
     return _select_model(provider, "deep")
 
 def select_llm_provider() -> tuple[str, str | None]:
-    """Select the LLM provider and its API endpoint."""
+    """Select the LLM provider and its API endpoint.
+
+    Defaults to the last-used provider.
+    """
+    last_provider = get_pref("last_provider", "")
+
     # Ollama users can point at a remote ollama-serve via OLLAMA_BASE_URL
     # (convention from the broader Ollama ecosystem); falls back to the
     # localhost default when unset.
@@ -280,12 +498,20 @@ def select_llm_provider() -> tuple[str, str | None]:
         ("Ollama", "ollama", ollama_url),
     ]
 
+    # Build choices with last-used marker
+    choices = []
+    default_val = None
+    for display, provider_key, url in PROVIDERS:
+        label = f"{display} ← (上次选择)" if provider_key == last_provider else display
+        val = (provider_key, url)
+        choices.append(questionary.Choice(label, value=val))
+        if provider_key == last_provider:
+            default_val = val
+
     choice = questionary.select(
         "Select your LLM Provider:",
-        choices=[
-            questionary.Choice(display, value=(provider_key, url))
-            for display, provider_key, url in PROVIDERS
-        ],
+        choices=choices,
+        default=default_val,
         instruction="\n- Use arrow keys to navigate\n- Press Enter to select",
         style=questionary.Style(
             [
@@ -518,23 +744,39 @@ def ensure_api_key(provider: str) -> Optional[str]:
 
 
 def ask_output_language() -> str:
-    """Ask for report output language."""
+    """Ask for report output language.
+
+    Defaults to the last-used language.
+    """
+    last_lang = get_pref("last_language", "English")
+
+    LANGUAGES = [
+        ("English", "English"),
+        ("Chinese (中文)", "Chinese"),
+        ("Japanese (日本語)", "Japanese"),
+        ("Korean (한국어)", "Korean"),
+        ("Hindi (हिन्दी)", "Hindi"),
+        ("Spanish (Español)", "Spanish"),
+        ("Portuguese (Português)", "Portuguese"),
+        ("French (Français)", "French"),
+        ("German (Deutsch)", "German"),
+        ("Arabic (العربية)", "Arabic"),
+        ("Russian (Русский)", "Russian"),
+        ("Custom language", "custom"),
+    ]
+
+    choices = []
+    default_val = None
+    for display, value in LANGUAGES:
+        label = f"{display} ← (上次选择)" if value == last_lang else display
+        choices.append(questionary.Choice(label, value=value))
+        if value == last_lang:
+            default_val = value
+
     choice = questionary.select(
         "Select Output Language:",
-        choices=[
-            questionary.Choice("English (default)", "English"),
-            questionary.Choice("Chinese (中文)", "Chinese"),
-            questionary.Choice("Japanese (日本語)", "Japanese"),
-            questionary.Choice("Korean (한국어)", "Korean"),
-            questionary.Choice("Hindi (हिन्दी)", "Hindi"),
-            questionary.Choice("Spanish (Español)", "Spanish"),
-            questionary.Choice("Portuguese (Português)", "Portuguese"),
-            questionary.Choice("French (Français)", "French"),
-            questionary.Choice("German (Deutsch)", "German"),
-            questionary.Choice("Arabic (العربية)", "Arabic"),
-            questionary.Choice("Russian (Русский)", "Russian"),
-            questionary.Choice("Custom language", "custom"),
-        ],
+        choices=choices,
+        default=default_val,
         style=questionary.Style([
             ("selected", "fg:yellow noinherit"),
             ("highlighted", "fg:yellow noinherit"),
