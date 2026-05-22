@@ -20,7 +20,6 @@ def init_tushare_pro():
     pro = ts.pro_api(token)
     
     # Override the HTTP URL for custom data provider
-    # ⭐️ 如果显示 Token 不对，请检查代码是不是少了这行
     custom_url = os.getenv("TUSHARE_HTTP_URL")
     if custom_url:
         pro._DataApi__http_url = custom_url
