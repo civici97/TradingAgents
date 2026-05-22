@@ -1,13 +1,18 @@
 import os
 import tushare as ts
+from dotenv import load_dotenv
 
 def init_tushare_pro():
     """
     Initialize Tushare Pro API with custom token and HTTP URL.
     This token supports historical minute data and real-time daily data.
     """
-    # Use the token provided by the user
-    token = 'XnZKUfOqUMVRPqLuocRfaoNmdCvOYgCEOLZfQzAFvImsXzQPSxkbNBXscYPMZssR'
+    load_dotenv()
+    
+    # Use the token provided by the user from env
+    token = os.getenv("TUSHARE_TOKEN", "")
+    if not token:
+        raise RuntimeError("TUSHARE_TOKEN is not set in environment or .env file.")
     
     # ts.set_token is recommended to be called so other ts.* functions might use it if needed
     ts.set_token(token)
@@ -15,7 +20,10 @@ def init_tushare_pro():
     pro = ts.pro_api(token)
     
     # Override the HTTP URL for custom data provider
-    pro._DataApi__http_url = "http://124.220.22.110:8020/"
+    # ⭐️ 如果显示 Token 不对，请检查代码是不是少了这行
+    custom_url = os.getenv("TUSHARE_HTTP_URL")
+    if custom_url:
+        pro._DataApi__http_url = custom_url
     
     return pro
 
