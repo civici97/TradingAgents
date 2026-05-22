@@ -44,15 +44,8 @@ def _get_pro():
     """Return a cached tushare pro api handle."""
     global _pro
     if _pro is None:
-        import tushare as ts
-        token = os.environ.get("TUSHARE_TOKEN", "")
-        if not token:
-            raise RuntimeError(
-                "TUSHARE_TOKEN environment variable is not set. "
-                "Please set it in your .env file."
-            )
-        ts.set_token(token)
-        _pro = ts.pro_api()
+        from .tushare_init import init_tushare_pro
+        _pro = init_tushare_pro()
     return _pro
 
 
